@@ -4,19 +4,23 @@ from yt_dlp import YoutubeDL
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
-# Sizning haqiqiy bot tokeningiz joylandi!
+# Bot tokeni
 BOT_TOKEN = '8893365405:AAGrucdJBJhNfE-g6Q1qbmqtqYpB5nIYfIQ'
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# Render portni tekshirganda "OK" javobini beruvchi veb-server
 class WebServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header("Content-type", "text/html")
         self.end_headers()
         self.wfile.write(b"Bot ishlayapti!")
 
 def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
+    # Render avtomatik taqdim etadigan portni olamiz, agar bo'lmasa 8000-portni o'rnatamiz
+    port = int(os.environ.get("PORT", 8000))
     server = HTTPServer(('0.0.0.0', port), WebServer)
+    print(f"Veb-server {port}-portda ishga tushdi...")
     server.serve_forever()
 
 @bot.message_handler(commands=['start'])
@@ -52,9 +56,11 @@ def handle_text(message):
             os.remove(file_path)
             bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
     except Exception as e:
+        print(f"Xatolik: {e}")  # Loglarda xatolikni ko'rish uchun
         bot.edit_message_text("Kechirasiz, musiqani topishda xatolik yuz berdi. 😔", chat_id=message.chat.id, message_id=status_msg.message_id)
 
 if __name__ == '__main__':
+    # Veb-serverni alohida oqimda Render uchun ochib qo'yamiz
     threading.Thread(target=run_web_server, daemon=True).start()
     print("Bot doimiy rejimda ishga tushdi...")
     bot.infinity_polling()
