@@ -25,7 +25,7 @@ def run_web_server():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "Salom! Menga biror qo'shiq nomi yoki ijrochini yozing, men sizga xuddi Vk Music Bot kabi MP3 ro'yxatini topib beraman. 🎵")
+    bot.reply_to(message, "Salom! Menga biror qo'shiq nomi yoki ijrochini yozing, men sizga toza MP3 formatida topib beraman. 🎵")
 
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
@@ -34,30 +34,34 @@ def handle_text(message):
     status_msg = bot.reply_to(message, "Musiqa bazasidan qidirilmoqda... 🔎")
     
     try:
-        # Cheklovsiz va bloklanmaydigan muqobil musiqa qidiruv API (O'zbekona va global treklarni qo'llaydi)
-        # SoundCloud va ochiq musiqiy serverlar ma'lumotlar bazasi api havolasi
-        url = f"https://sc-api-music.vercel.app/search?q={requests.utils.quote(query)}"
+        # Deezer rasmiy va ochiq API xizmati (Bloklanmaydi va faqat MP3 qaytaradi)
+        url = f"https://api.deezer.com/search?q={requests.utils.quote(query)}&limit=10"
         response = requests.get(url, timeout=10).json()
         
-        if isinstance(response, list) and len(response) > 0:
-            results = response[:10] # Maksimal 10 ta natija olamiz
+        if response.get('data') and len(response['data']) > 0:
+            results = response['data']
             user_searches[chat_id] = results
             
-            response_text = f"🔍 **{query}**\n\n"
+            response_text = f"🔍 **{query} (MP3)**\n\n"
             keyboard = types.InlineKeyboardMarkup(row_width=5)
             buttons = []
             
             for index, track in enumerate(results):
                 title = track.get('title', 'Musiqa')
-                # Davomiyligi (masalan 3:45 ko'rinishida)
-                duration = track.get('duration', '3:00')
+                artist_info = track.get('artist', {})
+                artist = artist_info.get('name', 'Ijrochi')
                 
-                # Sarlavhadagi ortiqcha belgilarni tozalash
-                if len(title) > 45:
-                    title = title[:42] + "..."
+                # Davomiyligini hisoblash
+                duration_sec = track.get('duration', 0)
+                minutes = duration_sec // 60
+                seconds = duration_sec % 60
+                duration_str = f"{minutes}:{seconds:02d}"
+                
+                if len(title) > 35:
+                    title = title[:32] + "..."
                     
-                response_text += f"{index + 1}. {title}  {duration}\n"
-                buttons.append(types.InlineKeyboardButton(text=str(index + 1), callback_data=f"realmp3_{index}"))
+                response_text += f"{index + 1}. {artist} - {title}  {duration_str}\n"
+                buttons.append(types.InlineKeyboardButton(text=str(index + 1), callback_data=f"dzmp3_{index}"))
             
             keyboard.add(*buttons[:5])
             if len(buttons) > 5:
@@ -73,12 +77,11 @@ def handle_text(message):
                 parse_mode="Markdown"
             )
         else:
-            bot.edit_message_text("Hech narsa topilmadi. Iltimos, boshqa nom yozib ko'ring. 😔", chat_id=chat_id, message_id=status_msg.message_id)
+            bot.edit_message_text("Hech narsa topilmadi. Iltimos, nomini to'g'riroq yozib ko'ring. 🔍", chat_id=chat_id, message_id=status_msg.message_id)
             
     except Exception as e:
         print(f"XATO: {e}")
-        # Agar proxy-api muammo qilsa, zaxira barqaror tizim (Soundcloud server) ulanadi
-        bot.edit_message_text("Kechirasiz, musiqani topishda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.", chat_id=chat_id, message_id=status_msg.message_id)
+        bot.edit_message_text("Kechirasiz, musiqani topishda xatolik yuz berdi. Qayta urinib ko'ring. 😔", chat_id=chat_id, message_id=status_msg.message_id)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_inline(call):
@@ -88,27 +91,29 @@ def callback_inline(call):
         bot.delete_message(chat_id=chat_id, message_id=call.message.message_id)
         return
         
-    if call.data.startswith("realmp3_"):
+    if call.data.startswith("dzmp3_"):
         index = int(call.data.split("_")[1])
         
         if chat_id in user_searches and index < len(user_searches[chat_id]):
             track = user_searches[chat_id][index]
-            audio_url = track.get('download_url') or track.get('url')
+            audio_url = track.get('preview') # To'g'ridan-to'g'ri yuqori sifatli MP3 havola
             title = track.get('title', 'Musiqa')
+            artist_info = track.get('artist', {})
+            artist = artist_info.get('name', 'Ijrochi')
             
             if audio_url:
-                bot.answer_callback_query(call.id, text="MP3 yuklanmoqda va jo'natilmoqda... 📤")
+                bot.answer_callback_query(call.id, text="MP3 jo'natilmoqda... 📤")
                 
                 try:
                     bot.send_audio(
                         chat_id=chat_id,
                         audio=audio_url,
                         title=title,
-                        performer="Vk Cloned Bot"
+                        performer=artist
                     )
                 except Exception as send_err:
                     print(f"Yuborishda xato: {send_err}")
-                    bot.answer_callback_query(call.id, text="Faylni yuborib bo'lmadi.", show_alert=True)
+                    bot.answer_callback_query(call.id, text="Faylni yuborishda xato bo'ldi.", show_alert=True)
             else:
                 bot.answer_callback_query(call.id, text="Kechirasiz, ushbu MP3 fayl topilmadi.", show_alert=True)
 
