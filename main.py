@@ -1,6 +1,6 @@
 import os
 import telebot
-from yt_dlp import YoutubeDL
+import requests
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 
@@ -21,43 +21,43 @@ def run_web_server():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "Salom! Menga biror qo'shiq nomi yoki ijrochini yozing, men uni sizga SoundCloud'dan topib beraman. 🎵")
+    bot.reply_to(message, "Salom! Menga biror qo'shiq nomi yoki ijrochini yozing, men uni sizga tez fursatda topib beraman! 🎵")
 
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     query = message.text
-    status_msg = bot.reply_to(message, "SoundCloud'dan qidirilmoqda... 🔎")
+    status_msg = bot.reply_to(message, "Musiqa qidirilmoqda... 🔎")
     
-    # Qidiruvni SoundCloud orqali amalga oshirish sozlamalari
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': 'music_file.%(ext)s',
-        'default_search': 'scsearch1',  # ytsearch o'rniga scsearch (SoundCloud) qilindi
-        'noplaylist': True,
-        'quiet': True
-    }
-
     try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(query, download=True)
-            video_info = info['entries'][0] if 'entries' in info else info
-            title = video_info.get('title', 'Musiqa')
+        # iTunes ochiq va bepul API'sidan foydalanamiz (bloklanmaydi, juda tez ishlaydi)
+        url = f"https://itunes.apple.com/search?term={requests.utils.quote(query)}&media=music&limit=1"
+        response = requests.get(url).json()
+        
+        if response.get('resultCount', 0) > 0:
+            track = response['results'][0]
+            title = track.get('trackName', 'Musiqa')
+            performer = track.get('artistName', 'Ijrochi')
+            audio_url = track.get('previewUrl') # To'g'ridan-to'g'ri audio havola
             
-            ext = video_info.get('ext', 'mp3')
-            file_path = f"music_file.{ext}"
-
-            bot.edit_message_text("Musiqa topildi! Yuklanmoqda... 📤", chat_id=message.chat.id, message_id=status_msg.message_id)
-            
-            with open(file_path, 'rb') as audio:
-                bot.send_audio(chat_id=message.chat.id, audio=audio, title=title, performer="SoundCloud Bot")
-            
-            if os.path.exists(file_path):
-                os.remove(file_path)
+            if audio_url:
+                bot.edit_message_text("Musiqa topildi! Yuklanmoqda... 📤", chat_id=message.chat.id, message_id=status_msg.message_id)
                 
-            bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
+                # Audioni havola orqali srazu foydalanuvchiga yuboramiz
+                bot.send_audio(
+                    chat_id=message.chat.id, 
+                    audio=audio_url, 
+                    title=title, 
+                    performer=performer
+                )
+                bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
+            else:
+                bot.edit_message_text("Kechirasiz, ushbu musiqaning audio fayli topilmadi. 😔", chat_id=message.chat.id, message_id=status_msg.message_id)
+        else:
+            bot.edit_message_text("Hech narsa topilmadi. Iltimos, nomini to'g'riroq yozib ko'ring. 🔍", chat_id=message.chat.id, message_id=status_msg.message_id)
+            
     except Exception as e:
         print(f"XATO YUZ BERDI: {e}")
-        bot.edit_message_text("Kechirasiz, musiqani topishda xatolik yuz berdi. 😔\nIltimos, qayta urinib ko'ring.", chat_id=message.chat.id, message_id=status_msg.message_id)
+        bot.edit_message_text("Kechirasiz, tizimda xatolik yuz berdi. Oxirroq qayta urinib ko'ring. 😔", chat_id=message.chat.id, message_id=status_msg.message_id)
 
 if __name__ == '__main__':
     threading.Thread(target=run_web_server, daemon=True).start()
