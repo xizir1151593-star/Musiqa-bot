@@ -21,18 +21,18 @@ def run_web_server():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.reply_to(message, "Salom! Menga biror qo'shiq nomi yoki ijrochini yozing, men uni sizga topib beraman. 🎵")
+    bot.reply_to(message, "Salom! Menga biror qo'shiq nomi yoki ijrochini yozing, men uni sizga SoundCloud'dan topib beraman. 🎵")
 
 @bot.message_handler(content_types=['text'])
 def handle_text(message):
     query = message.text
-    status_msg = bot.reply_to(message, "Qidirilmoqda... 🔎")
+    status_msg = bot.reply_to(message, "SoundCloud'dan qidirilmoqda... 🔎")
     
-    # FFmpeg talab qilmaydigan eng xavfsiz sozlamalar
+    # Qidiruvni SoundCloud orqali amalga oshirish sozlamalari
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': 'music_file.%(ext)s',  # Fayl nomini oddiy va aniq qilamiz
-        'default_search': 'ytsearch1',
+        'outtmpl': 'music_file.%(ext)s',
+        'default_search': 'scsearch1',  # ytsearch o'rniga scsearch (SoundCloud) qilindi
         'noplaylist': True,
         'quiet': True
     }
@@ -43,14 +43,13 @@ def handle_text(message):
             video_info = info['entries'][0] if 'entries' in info else info
             title = video_info.get('title', 'Musiqa')
             
-            # Yuklangan fayl formatini (m4a, webm yoki mp3) aniqlab olamiz
-            ext = video_info.get('ext', 'm4a')
+            ext = video_info.get('ext', 'mp3')
             file_path = f"music_file.{ext}"
 
             bot.edit_message_text("Musiqa topildi! Yuklanmoqda... 📤", chat_id=message.chat.id, message_id=status_msg.message_id)
             
             with open(file_path, 'rb') as audio:
-                bot.send_audio(chat_id=message.chat.id, audio=audio, title=title, performer="Musiqa Bot")
+                bot.send_audio(chat_id=message.chat.id, audio=audio, title=title, performer="SoundCloud Bot")
             
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -58,9 +57,8 @@ def handle_text(message):
             bot.delete_message(chat_id=message.chat.id, message_id=status_msg.message_id)
     except Exception as e:
         print(f"XATO YUZ BERDI: {e}")
-        bot.edit_message_text("Kechirasiz, musiqani topishda xatolik yuz berdi. 😔\nMuammo davom etsa, qayta urinib ko'ring.", chat_id=message.chat.id, message_id=status_msg.message_id)
+        bot.edit_message_text("Kechirasiz, musiqani topishda xatolik yuz berdi. 😔\nIltimos, qayta urinib ko'ring.", chat_id=message.chat.id, message_id=status_msg.message_id)
 
 if __name__ == '__main__':
     threading.Thread(target=run_web_server, daemon=True).start()
     bot.infinity_polling()
-
