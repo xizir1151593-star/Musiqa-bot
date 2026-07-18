@@ -1,5 +1,5 @@
 aiogram==2.25.1
-yt-dlp
+yt-dlp--upgrade
 SpeechRecognition
 pydub
 aiohttp
