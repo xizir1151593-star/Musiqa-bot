@@ -1,128 +1,106 @@
-import os
-import logging
-from flask import Flask
-from threading import Thread
 import telebot
-import yt_dlp
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import requests
 
-# 1. Loglarni sozlash (Xatoliklarni Render panelida kuzatish uchun)
-logging.basicConfig(level=logging.INFO)
-
-# 2. Flask veb-server qismi (Render pingeri va cron-job.org uchun)
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Musiqa va Kino boti muvaffaqiyatli ishlayapti!"
-
-def run():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.daemon = True
-    t.start()
-
-# 3. Bot va Kanal Sozlamalari
-BOT_TOKEN = os.getenv('API_TOKEN', 'SIZNING_BOT_TOKENINGIZ')
-# Kino kanalingiz ID raqami (-100 bilan boshlanishi shart!)
-CHANNEL_ID = int(os.getenv('CHANNEL_ID', '-100XXXXXXXXXX')) 
-
+# Siz yuborgan bot tokeni
+BOT_TOKEN = '8893365405:AAGrucdJBJhNfE-g6Q1qbmqtqYpB5nIYfIQ'
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 4. CHALA YUKLASHNI TUZATUVCHI MULTIMEDIA SOZLAMALARI (FFmpeg talab qilmaydi)
-YDL_OPTS = {
-    'format': 'bestaudio/best',
-    'keepvideo': False,
-    'quiet': True,
-    'no_warnings': True,
-    'external_downloader': 'native',  # Yuklash uzilib qolmasligi uchun
-    'nocheckcertificate': True,
-    'source_address': '0.0.0.0',
-    'http_chunk_size': 1048576,       # Audioni 1MB lik bo'laklar bilan uzluksiz tortish
-    'retries': 15,                    # Tarmoq o'ynab ketsa, 15 martagacha qayta ulanish
-    'fragment_retries': 15,
-    'outtmpl': 'downloads/%(title)s.%(ext)s',
-}
+USER_SEARCHES = {}
+JAMENDO_CLIENT_ID = '55d040ad'
 
-# 5. /start Buyrug'i
+def generate_keyboard(tracks, page, total_pages):
+    markup = InlineKeyboardMarkup(row_width=5)
+    row1, row2 = [], []
+    for i in range(len(tracks)):
+        btn = InlineKeyboardButton(str(i + 1), callback_data=f"track_{i}")
+        if i < 5: row1.append(btn)
+        else: row2.append(btn)
+            
+    if row1: markup.row(*row1)
+    if row2: markup.row(*row2)
+    
+    page_btn = InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="none")
+    if page < total_pages:
+        next_btn = InlineKeyboardButton("Keyingi ➡️", callback_data=f"page_{page + 1}")
+        markup.row(page_btn, next_btn)
+    else:
+        markup.row(page_btn)
+        
+    close_btn = InlineKeyboardButton("❌ Yopish", callback_data="close_menu")
+    markup.row(close_btn)
+    return markup
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(
-        message, 
-        "👋 Salom! Men universal Musiqa yuklovchi va Kino qidiruvchi botman.\n\n"
-        "🎵 **Musiqa yuklash uchun:** YouTube havola (link) yuboring.\n"
-        "🎬 **Kino topish uchun:** Kanaldagi kino kodini (raqamini) yozing."
-    )
+    bot.reply_to(message, "👋 **Salom! Musiqa nomini yoki ijrochini yozing:**", parse_mode='Markdown')
 
-# 6. Xabarlarni Qayta Ishlash (Musiqa yuklash va Kino qidirish bitta joyda)
 @bot.message_handler(func=lambda message: True)
-def handle_universal(message):
-    text = message.text.strip()
+def search_music(message):
+    query = message.text
+    chat_id = message.chat.id
+    searching_msg = bot.reply_to(message, "🔍 Qidirilmoqda...")
     
-    # ---- 1-HOLAT: Agar foydalanuvchi YouTube Link yuborsa (Musiqa Yuklash) ----
-    if "youtube.com" in text or "youtu.be" in text:
-        msg = bot.reply_to(message, "📥 Musiqa tahlil qilinmoqda va to'liq yuklanmoqda, kuting...")
+    try:
+        api_url = f"https://api.jamendo.com/v3.0/tracks/?client_id={JAMENDO_CLIENT_ID}&format=json&limit=50&search={query}"
+        response = requests.get(api_url).json()
+        results = response.get('results', [])
         
-        if not os.path.exists('downloads'):
-            os.makedirs('downloads')
+        if not results:
+            bot.edit_message_text("❌ Hech narsa topilmadi.", chat_id, searching_msg.message_id)
+            return
             
-        try:
-            with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-                info = ydl.extract_info(text, download=True)
-                filename = ydl.prepare_filename(info)
-                
-            if os.path.exists(filename):
-                bot.edit_message_text("🚀 Musiqa tayyor! Telegram'ga yuklanmoqda...", chat_id=message.chat.id, message_id=msg.message_id)
-                
-                with open(filename, 'rb') as audio:
-                    bot.send_audio(message.chat.id, audio, caption="🎧 @Musiqa_Ch_bot orqali yuklab olindi")
-                
-                os.remove(filename)  # Server diski to'lib qolmasligi uchun faylni o'chiramiz
-                bot.delete_message(chat_id=message.chat.id, message_id=msg.message_id)
-            else:
-                bot.edit_message_text("❌ Audio faylni yuklashda uzilish bo'ldi.", chat_id=message.chat.id, message_id=msg.message_id)
-                
-        except Exception as e:
-            logging.error(f"Musiqa yuklashda xato: {e}")
-            bot.edit_message_text("❌ Kechirasiz, musiqani to'liq yuklab bo'lmadi. Havola xato yoki tarmoq band.", chat_id=message.chat.id, message_id=msg.message_id)
-
-    # ---- 2-HOLAT: Agar foydalanuvchi faqat Raqam (Kod) yuborsa (Kino Qidirish) ----
-    elif text.isdigit():
-        msg = bot.reply_to(message, "🔍 Kino bazadan qidirilmoqda...")
-        movie_msg_id = int(text)
+        USER_SEARCHES[chat_id] = {"tracks": results, "query": query}
+        send_page_results(chat_id, searching_msg.message_id, page=1)
         
-        try:
-            # Kanaldagi tayyor reklamasiz kinoni foydalanuvchiga nusxalab beradi
-            bot.copy_message(
-                chat_id=message.chat.id,
-                from_chat_id=CHANNEL_ID,
-                message_id=movie_msg_id,
-                caption=f"🎬 Marhamat, siz so'ragan kino/klip!\n\n🤖 Bizning bot: @Musiqa_Ch_bot"
-            )
-            bot.delete_message(chat_id=message.chat.id, message_id=msg.message_id)
-            
-        except Exception as e:
-            logging.error(f"Kino yuborishda xato: {e}")
-            bot.edit_message_text(
-                "❌ Kino topilmadi yoki xatolik yuz berdi.\n\n"
-                "**Tekshiring:**\n"
-                "1. Bot kanalingizda ADMIN qilinganmi?\n"
-                "2. Kanalingizda rostdan ham shunday ID raqamli xabar bormi?", 
-                chat_id=message.chat.id, message_id=msg.message_id
-            )
-            
-    # ---- 3-HOLAT: Noto'g'ri buyruq yuborilganda ----
-    else:
-        bot.reply_to(
-            message, 
-            "⚠️ Noto'g'ri buyruq!\n\n"
-            "Musiqa yuklash uchun **YouTube link** yuboring.\n"
-            "Kino olish uchun esa kanaldagi **kino kodini (raqamini)** yozing."
-        )
+    except Exception as e:
+        bot.edit_message_text("⚠️ Xatolik yuz berdi.", chat_id, searching_msg.message_id)
 
-# 7. Botni uzluksiz yurgizish
+def send_page_results(chat_id, message_id, page):
+    search_data = USER_SEARCHES.get(chat_id)
+    if not search_data: return
+        
+    all_tracks = search_data["tracks"]
+    per_page = 10
+    total_pages = (len(all_tracks) + per_page - 1) // per_page
+    
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    current_tracks = all_tracks[start_idx:end_idx]
+    
+    response_text = ""
+    for idx, track in enumerate(current_tracks):
+        duration_min = int(track['duration']) // 60
+        duration_sec = int(track['duration']) % 60
+        response_text += f"{idx + 1}. {track['artist_name']} - {track['name']} ({duration_min}:{duration_sec:02d})\n"
+        
+    markup = generate_keyboard(current_tracks, page, total_pages)
+    search_data["current_page"] = page
+    
+    bot.edit_message_text(text=response_text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callbacks(call):
+    chat_id = call.message.chat.id
+    data = call.data
+    
+    if data == "close_menu":
+        bot.delete_message(chat_id, call.message.message_id)
+        return
+    if data.startswith("page_"):
+        next_page = int(data.split("_")[1])
+        send_page_results(chat_id, call.message.message_id, page=next_page)
+        return
+    if data.startswith("track_"):
+        track_index_on_page = int(data.split("_")[1])
+        search_data = USER_SEARCHES.get(chat_id)
+        if search_data:
+            current_page = search_data["current_page"]
+            actual_index = ((current_page - 1) * 10) + track_index_on_page
+            track = search_data["tracks"][actual_index]
+            bot.answer_callback_query(call.id, text="🎵 Audio yuborilmoqda...")
+            bot.send_audio(chat_id=chat_id, audio=track['audio'], title=track['name'], performer=track['artist_name'], caption=f"🎧 **{track['artist_name']} - {track['name']}**\n\n@Musiqa_chi_bot")
+
 if __name__ == '__main__':
-    keep_alive()  # Render uyg'oq turishi uchun Flaskni yoqamiz
-    logging.info("Server va Bot polling rejimida ishga tushdi...")
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    print("Bot muvaffaqiyatli yoqildi...")
+    bot.infinity_polling()
