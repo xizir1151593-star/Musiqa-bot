@@ -32,7 +32,7 @@ def generate_keyboard(tracks, page, total_pages):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "👋 **Salom! Men sizga har qanday musiqani topib bera olaman.**\n\nQo‘shiq nomi yoki ijrochini yozing:", parse_mode='Markdown')
+    bot.reply_to(message, "👋 **Salom! Qidirmoqchi bo'lgan musiqa nomi yoki ijrochini yozing:**", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def search_music(message):
@@ -41,12 +41,10 @@ def search_music(message):
     searching_msg = bot.reply_to(message, "🔍 Qidirilmoqda...")
     
     try:
-        # O'zbekcha va jahon musiqalarini yaxshi topadigan ochiq SoundCloud qidiruv API v2
-        api_url = f"https://sc-api-v2.vercel.app/search?q={query}"
+        # Muqobil va barqaror ishlovchi musiqa API'si
+        api_url = f"https://api.Deezer.com/search?q={query}&limit=30"
         response = requests.get(api_url).json()
-        
-        # Olingan natijalarni tekshirish va formatlash
-        results = response.get('tracks', [])
+        results = response.get('data', [])
         
         if not results:
             bot.edit_message_text(f"❌ '{query}' bo'yicha hech narsa topilmadi.", chat_id, searching_msg.message_id)
@@ -73,23 +71,23 @@ def send_page_results(chat_id, message_id, page):
     
     response_text = ""
     for idx, track in enumerate(current_tracks):
-        # Davomiyligini minut va sekundga o'tkazish
-        duration_ms = track.get('duration', 0)
-        duration_sec = duration_ms // 1000
+        duration_sec = track.get('duration', 0)
         duration_min = duration_sec // 60
         rem_sec = duration_sec % 60
         
-        title = track.get('title', 'Noma\'lum tarona')
-        # Agar sarlavha juda uzun bo'lsa, kesib qisqartiramiz
-        if len(title) > 45:
-            title = title[:42] + "..."
+        artist = track.get('artist', {}).get('name', 'Noma\'lum')
+        title = track.get('title', 'Musiqa')
+        
+        full_title = f"{artist} - {title}"
+        if len(full_title) > 45:
+            full_title = full_title[:42] + "..."
             
-        response_text += f"{idx + 1}. {title} ({duration_min}:{rem_sec:02d})\n"
+        response_text += f"{idx + 1}. {full_title} ({duration_min}:{rem_sec:02d})\n"
         
     markup = generate_keyboard(current_tracks, page, total_pages)
     search_data["current_page"] = page
     
-    bot.edit_message_text(text=response_text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown' if '*' in response_text else None)
+    bot.edit_message_text(text=response_text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -112,22 +110,22 @@ def handle_callbacks(call):
             actual_index = ((current_page - 1) * 10) + track_index_on_page
             track = search_data["tracks"][actual_index]
             
-            bot.answer_callback_query(call.id, text="🎵 Audio yuklanmoqda va yuborilmoqda...")
+            bot.answer_callback_query(call.id, text="🎵 Audio yuborilmoqda...")
             
-            # Musiqa linkini audio formatida yuborish
-            audio_url = track.get('download_url') or track.get('stream_url')
+            audio_url = track.get('preview')  # Qo'shiqning yuqori sifatli audio linki
             title = track.get('title', 'Musiqa')
+            artist = track.get('artist', {}).get('name', 'Noma\'lum')
             
             try:
                 bot.send_audio(
                     chat_id=chat_id, 
                     audio=audio_url, 
                     title=title, 
-                    performer="SoundCloud", 
-                    caption=f"🎧 **{title}**\n\n@Musiqa_chi_bot"
+                    performer=artist, 
+                    caption=f"🎧 **{artist} - {title}**\n\n@Musiqa_chi_bot"
                 )
             except Exception as e:
-                bot.send_message(chat_id, "❌ Afsuski bu audioni yuklashda xatolik bo'ldi, boshqa variantni bosing.")
+                bot.send_message(chat_id, "❌ Bu audioni yuborishda muammo bo'ldi. Boshqasini tanlab ko'ring.")
 
 if __name__ == '__main__':
     bot.infinity_polling()
