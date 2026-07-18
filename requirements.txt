@@ -1,5 +1,3 @@
-aiogram==2.25.1
-yt-dlp--upgrade
-SpeechRecognition
-pydub
-aiohttp
+pyTelegramBotAPI
+Flask
+yt-dlp
