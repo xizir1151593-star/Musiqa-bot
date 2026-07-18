@@ -2,12 +2,11 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import requests
 
-# Siz yuborgan bot tokeni
+# Bot tokeningiz
 BOT_TOKEN = '8893365405:AAGrucdJBJhNfE-g6Q1qbmqtqYpB5nIYfIQ'
 bot = telebot.TeleBot(BOT_TOKEN)
 
 USER_SEARCHES = {}
-JAMENDO_CLIENT_ID = '55d040ad'
 
 def generate_keyboard(tracks, page, total_pages):
     markup = InlineKeyboardMarkup(row_width=5)
@@ -33,7 +32,7 @@ def generate_keyboard(tracks, page, total_pages):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "👋 **Salom! Musiqa nomini yoki ijrochini yozing:**", parse_mode='Markdown')
+    bot.reply_to(message, "👋 **Salom! Men sizga har qanday musiqani topib bera olaman.**\n\nQo‘shiq nomi yoki ijrochini yozing:", parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def search_music(message):
@@ -42,19 +41,23 @@ def search_music(message):
     searching_msg = bot.reply_to(message, "🔍 Qidirilmoqda...")
     
     try:
-        api_url = f"https://api.jamendo.com/v3.0/tracks/?client_id={JAMENDO_CLIENT_ID}&format=json&limit=50&search={query}"
+        # O'zbekcha va jahon musiqalarini yaxshi topadigan ochiq SoundCloud qidiruv API v2
+        api_url = f"https://sc-api-v2.vercel.app/search?q={query}"
         response = requests.get(api_url).json()
-        results = response.get('results', [])
+        
+        # Olingan natijalarni tekshirish va formatlash
+        results = response.get('tracks', [])
         
         if not results:
-            bot.edit_message_text("❌ Hech narsa topilmadi.", chat_id, searching_msg.message_id)
+            bot.edit_message_text(f"❌ '{query}' bo'yicha hech narsa topilmadi.", chat_id, searching_msg.message_id)
             return
             
         USER_SEARCHES[chat_id] = {"tracks": results, "query": query}
         send_page_results(chat_id, searching_msg.message_id, page=1)
         
     except Exception as e:
-        bot.edit_message_text("⚠️ Xatolik yuz berdi.", chat_id, searching_msg.message_id)
+        print(f"Xato: {e}")
+        bot.edit_message_text("⚠️ Tizimda xatolik yuz berdi. Birozdan so'ng qayta urinib ko'ring.", chat_id, searching_msg.message_id)
 
 def send_page_results(chat_id, message_id, page):
     search_data = USER_SEARCHES.get(chat_id)
@@ -70,14 +73,23 @@ def send_page_results(chat_id, message_id, page):
     
     response_text = ""
     for idx, track in enumerate(current_tracks):
-        duration_min = int(track['duration']) // 60
-        duration_sec = int(track['duration']) % 60
-        response_text += f"{idx + 1}. {track['artist_name']} - {track['name']} ({duration_min}:{duration_sec:02d})\n"
+        # Davomiyligini minut va sekundga o'tkazish
+        duration_ms = track.get('duration', 0)
+        duration_sec = duration_ms // 1000
+        duration_min = duration_sec // 60
+        rem_sec = duration_sec % 60
+        
+        title = track.get('title', 'Noma\'lum tarona')
+        # Agar sarlavha juda uzun bo'lsa, kesib qisqartiramiz
+        if len(title) > 45:
+            title = title[:42] + "..."
+            
+        response_text += f"{idx + 1}. {title} ({duration_min}:{rem_sec:02d})\n"
         
     markup = generate_keyboard(current_tracks, page, total_pages)
     search_data["current_page"] = page
     
-    bot.edit_message_text(text=response_text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
+    bot.edit_message_text(text=response_text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown' if '*' in response_text else None)
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -94,13 +106,28 @@ def handle_callbacks(call):
     if data.startswith("track_"):
         track_index_on_page = int(data.split("_")[1])
         search_data = USER_SEARCHES.get(chat_id)
+        
         if search_data:
             current_page = search_data["current_page"]
             actual_index = ((current_page - 1) * 10) + track_index_on_page
             track = search_data["tracks"][actual_index]
-            bot.answer_callback_query(call.id, text="🎵 Audio yuborilmoqda...")
-            bot.send_audio(chat_id=chat_id, audio=track['audio'], title=track['name'], performer=track['artist_name'], caption=f"🎧 **{track['artist_name']} - {track['name']}**\n\n@Musiqa_chi_bot")
+            
+            bot.answer_callback_query(call.id, text="🎵 Audio yuklanmoqda va yuborilmoqda...")
+            
+            # Musiqa linkini audio formatida yuborish
+            audio_url = track.get('download_url') or track.get('stream_url')
+            title = track.get('title', 'Musiqa')
+            
+            try:
+                bot.send_audio(
+                    chat_id=chat_id, 
+                    audio=audio_url, 
+                    title=title, 
+                    performer="SoundCloud", 
+                    caption=f"🎧 **{title}**\n\n@Musiqa_chi_bot"
+                )
+            except Exception as e:
+                bot.send_message(chat_id, "❌ Afsuski bu audioni yuklashda xatolik bo'ldi, boshqa variantni bosing.")
 
 if __name__ == '__main__':
-    print("Bot muvaffaqiyatli yoqildi...")
     bot.infinity_polling()
