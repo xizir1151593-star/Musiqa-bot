@@ -1,125 +1,108 @@
-import logging
 import os
-import asyncio
-import re
-from aiogram import Bot, Dispatcher, types, executor
+import logging
+from flask import Flask
+from threading import Thread
+import telebot
 import yt_dlp
-import speech_recognition as sr
-from pydub import AudioSegment
-from aiohttp import web, ClientSession
 
-# --- SOZLAMALAR ---
-API_TOKEN = os.getenv('API_TOKEN', 'SIZNING_BOT_TOKENINGIZ')
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+# 1. Loglarni sozlash (Xatoliklarni Render panelida ko'rish uchun)
 logging.basicConfig(level=logging.INFO)
 
-# --- YOUTUBE QIDIRUVNI TUZATISH (YANGI USUL) ---
-async def search_song(query):
-    """
-    YouTube qidiruv tizimidan videoni aniq va bloklarsiz topish usuli.
-    Xonanda nomi yoki qo'shiq matnidan parcha bo'lsa ham eng birinchi natijani oladi.
-    """
-    try:
-        # Qidiruv matnini URL formatiga o'tkazish
-        encoded_query = query.replace(" ", "+")
-        url = f"https://www.youtube.com/results?search_query={encoded_query}"
+# 2. Flask veb-server qismi (Render pingeri va cron-job.org uchun)
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Musiqa bot muvaffaqiyatli ishlayapti!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.daemon = True  # Asosiy dastur to'xtasa, server ham to'xtashi uchun
+    t.start()
+
+# 3. Botni va Tokenni sozlash
+# Tokenni Render'dagi Environment Variables'ga qo'shish tavsiya etiladi
+BOT_TOKEN = os.getenv('API_TOKEN', 'SIZNING_BOT_TOKENINGIZ')
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# 4. CHALA YUKLASH MUAMMOSINI TUZATUVCHI SOZLAMALAR
+YDL_OPTS = {
+    'format': 'bestaudio/best',
+    'keepvideo': False,
+    'quiet': True,
+    'no_warnings': True,
+    'external_downloader': 'native',  # Yuklash uzilib qolmasligi uchun universal drayver
+    'nocheckcertificate': True,
+    'source_address': '0.0.0.0',
+    'http_chunk_size': 1048576,       # Audioni 1MB lik bo'laklar bilan uzluksiz, xavfsiz tortish
+    'retries': 15,                    # Internet o'ynab ketsa, 15 martagacha qayta ulanish
+    'fragment_retries': 15,           # Audio qismlarini oxirigacha tiklash
+    'outtmpl': 'downloads/%(title)s.%(ext)s', # Yuklanadigan fayl nomi va joyi
+    'postprocessors': [{
+        'key': 'FFmpegExtractAudio',
+        'preferredcodec': 'mp3',
+        'preferredquality': '192',    # Sifatli 192 kbps MP3 formatga o'tkazish
+    }],
+}
+
+# 5. Bot buyruqlari va ish mantig'i
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(
+        message, 
+        "👋 Salom! Men musiqa yuklovchi botman.\n\n"
+        "Menga YouTube'dan klip yoki musiqa havolasini (link) yuboring, "
+        "men uni sizga to'liq MP3 formatida yuklab beraman! 🎧"
+    )
+
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    url = message.text.strip()
+    
+    # Havolani tekshirish
+    if "youtube.com" in url or "youtu.be" in url:
+        msg = bot.reply_to(message, "📥 Musiqa tahlil qilinmoqda va yuklanmoqda, iltimos kuting...")
         
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        
-        async with ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                html = await response.text()
-                # Video ID-larini HTML ichidan qidirib topish
-                video_ids = re.findall(r"watch\?v=(\S{11})", html)
-                if video_ids:
-                    return f"https://www.youtube.com/watch?v={video_ids[0]}"
-    except Exception as e:
-        logging.error(f"YouTube qidiruvida xato: {e}")
-    
-    # Agar birinchi usul o'xshamasa, zaxira (yt-dlp) usuli:
-    try:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'noplaylist': True,
-            'extract_flat': True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"ytsearch1:{query}", download=False)
-            if 'entries' in info and info['entries']:
-                return info['entries'][0]['url']
-    except Exception as e:
-        logging.error(f"Zaxira qidiruvda xato: {e}")
-        
-    return None
-
-# --- OVOZLI XABARNI MATNGA O'GIRISH ---
-async def voice_to_text(voice_file_path):
-    try:
-        audio = AudioSegment.from_ogg(voice_file_path)
-        wav_path = "voice.wav"
-        audio.export(wav_path, format="wav")
-
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(wav_path) as source:
-            audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data, language="uz-UZ")
-            return text
-    except Exception as e:
-        logging.error(f"Ovozni matnga o'girishda xatolik: {e}")
-        return None
-
-# --- BOT HANDLERLARI ---
-@dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
-    await message.answer("Salom! Menga qo'shiq nomi, xonanda ismi yoki qo'shiqdan parcha yuboring. Ovozli xabar yuborsangiz ham topaman! 🎧")
-
-@dp.message_handler(content_types=['voice'])
-async def handle_voice(message: types.Message):
-    msg = await message.answer("🎧 Ovozli xabarni eshitib, matnga o'giryapman...")
-    
-    file_info = await bot.get_file(message.voice.file_id)
-    await bot.download_file(file_info.file_path, "voice.ogg")
-    
-    text = await voice_to_text("voice.ogg")
-    
-    if text:
-        await msg.edit_text(f"🔍 Siz aytdingiz: *{text}*\nQidiryapman...")
-        song_url = await search_song(text)
-        if song_url:
-            await msg.edit_text(f"✅ Marhamat, topildi:\n{song_url}")
-        else:
-            await msg.edit_text("Hech narsa topilmadi.")
+        # downloads papkasi bo'lmasa yaratish
+        if not os.path.exists('downloads'):
+            os.makedirs('downloads')
+            
+        try:
+            with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+                # Video ma'lumotlarini olish va yuklash
+                info = ydl.extract_info(url, download=True)
+                # yt-dlp mp3 ga o'girgandan keyin fayl nomini aniqlash
+                filename = ydl.prepare_filename(info)
+                mp3_filename = os.path.splitext(filename)[0] + '.mp3'
+                
+            if os.path.exists(mp3_filename):
+                bot.edit_message_text("🚀 Musiqa tayyor! Telegram'ga yuklanmoqda...", chat_id=message.chat.id, message_id=msg.message_id)
+                
+                # Audio faylni foydalanuvchiga yuborish
+                with open(mp3_filename, 'rb') as audio:
+                    bot.send_audio(message.chat.id, audio, caption="🎧 @Musiqa_Ch_bot orqali yuklab olindi")
+                
+                # Server to'lib qolmasligi uchun faylni o'chirish
+                os.remove(mp3_filename)
+                bot.delete_message(chat_id=message.chat.id, message_id=msg.message_id)
+            else:
+                bot.edit_message_text("❌ Audio faylni konvertatsiya qilishda xatolik yuz berdi.", chat_id=message.chat.id, message_id=msg.message_id)
+                
+        except Exception as e:
+            logging.error(f"Yuklashda xato: {e}")
+            bot.edit_message_text("❌ Kechirasiz, musiqani yuklab bo'lmadi. Tarmoq uzildi yoki havola xato.", chat_id=message.chat.id, message_id=msg.message_id)
     else:
-        await msg.edit_text("Ovozni aniqlab bo'lmadi, iltimos, aniqroq gapiring.")
+        bot.reply_to(message, "⚠️ Iltimos, faqat to'g'ri YouTube havola (link) yuboring.")
 
-@dp.message_handler(content_types=['text'])
-async def handle_text(message: types.Message):
-    # Rasmda ko'ringan "Hech narsa topilmadi" xabarini yo'qotish va qidirish
-    msg = await message.answer("🔍 Qidiryapman...")
-    song_url = await search_song(message.text)
-    
-    if song_url:
-        await msg.edit_text(f"✅ Marhamat, topildi:\n{song_url}")
-    else:
-        await msg.edit_text("Hech narsa topilmadi.")
-
-# --- RENDER KEEP-ALIVE SERVER ---
-async def handle(request):
-    return web.Response(text="Bot muvaffaqiyatli ishlayapti!")
-
-async def start_server():
-    app = web.Application()
-    app.router.add_get('/', handle)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
-    await site.start()
-
+# 6. Dasturni ishga tushirish qismi
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.create_task(start_server())
-    executor.start_polling(dp, skip_updates=True)
+    # Avval Render uyg'oq turishi uchun veb-serverni yoqamiz
+    keep_alive()
+    logging.info("Flask server muvaffaqiyatli yuklandi.")
+    
+    # Keyin botning o'zini uzluksiz ishga tushiramiz
+    logging.info("Bot polling rejimida ishga tushmoqda...")
+    bot.infinity_polling(timeout=10, long_polling_timeout=5)
